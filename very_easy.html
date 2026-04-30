@@ -1,5 +1,60 @@
+<!DOCTYPE html>
 <html>
-  <head>
-    <button>UPLOAD</button>
-  </head>
+<head></head>
+
+<body>
+
+<button onclick="upload('fileInput')">UPLOAD</button>
+
+<input 
+  type="file" 
+  id="fileInput" 
+  accept=".pdf,.ppt,.pptx,image/jpeg,image/png" 
+  hidden
+>
+
+<script>
+function upload(id) {
+  document.getElementById(id).click();
+}
+
+document.getElementById("fileInput").addEventListener("change", handleFile);
+
+function handleFile(event) {
+  const file = event.target.files[0];
+  if (!file) return;
+
+  const validTypes = [
+    "application/pdf",
+    "application/vnd.ms-powerpoint",
+    "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+    "image/jpeg",
+    "image/png"
+  ];
+
+  if (!validTypes.includes(file.type)) {
+    alert("Please upload PDF, PPT, PPTX, JPG, or PNG file.");
+    event.target.value = "";
+    return;
+  }
+
+  console.log("File selected:", file.name);
+
+  // ⚠️ Not recommended for large files
+  const reader = new FileReader();
+  reader.onload = function(e) {
+    const fileData = e.target.result;
+
+    try {
+      localStorage.setItem("uploadedFile", fileData);
+    } catch (err) {
+      alert("File too large to store in localStorage.");
+    }
+  };
+
+  reader.readAsDataURL(file);
+}
+</script>
+
+</body>
 </html>
