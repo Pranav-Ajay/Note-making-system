@@ -40,16 +40,13 @@ function handleFile(event) {
 
   console.log("File selected:", file.name);
 
-  // ⚠️ Not recommended for large files
   const reader = new FileReader();
+
   reader.onload = function(e) {
     const fileData = e.target.result;
 
-    try {
-      localStorage.setItem("uploadedFile", fileData);
-    } catch (err) {
-      alert("File too large to store in localStorage.");
-    }
+    console.log("File loaded successfully");
+
   };
 
   reader.readAsDataURL(file);
