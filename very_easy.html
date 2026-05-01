@@ -1,57 +1,173 @@
 <!DOCTYPE html>
-<html>
-<head></head>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Very Short Notes Generator</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+</head>
 
 <body>
 
-<button onclick="upload('fileInput')">UPLOAD</button>
+    <button onclick="upload('fileInput')">UPLOAD & GENERATE NOTES</button>
+    <input type="file" id="fileInput" accept=".pdf,.pptx" hidden>
 
-<input 
-  type="file" 
-  id="fileInput" 
-  accept=".pdf,.ppt,.pptx,image/jpeg,image/png" 
-  hidden
->
+    <script>
+        // Initialize PDF.js worker
+        pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
 
-<script>
-function upload(id) {
-  document.getElementById(id).click();
-}
+        function upload(id) {
+            document.getElementById(id).click();
+        }
 
-document.getElementById("fileInput").addEventListener("change", handleFile);
+        document.getElementById("fileInput").addEventListener("change", handleFile);
 
-function handleFile(event) {
-  const file = event.target.files[0];
-  if (!file) return;
+        async function handleFile(event) {
+            const file = event.target.files[0];
+            if (!file) return;
 
-  const validTypes = [
-    "application/pdf",
-    "application/vnd.ms-powerpoint",
-    "application/vnd.openxmlformats-officedocument.presentationml.presentation",
-    "image/jpeg",
-    "image/png"
-  ];
+            // 1. Setup the Model Placeholder (Replace with your actual API call logic)
+            const mockModel = {
+                summarize: async (text, options = {}) => {
+                    console.log("Summarizing chunk...");
+                    // This is where you would call your Gemini/LLM API
+                    return text.slice(0, 100) + "..."; 
+                }
+            };
 
-  if (!validTypes.includes(file.type)) {
-    alert("Please upload PDF, PPT, PPTX, JPG, or PNG file.");
-    event.target.value = "";
-    return;
-  }
+            const extractor = new DocumentExtractor(mockModel);
 
-  console.log("File selected:", file.name);
+            try {
+                console.log("Processing:", file.name);
+                const points = await extractor.generateNotes(file);
+                
+                // 2. Generate and Save PDF
+                const { jsPDF } = window.jspdf;
+                const doc = new jsPDF();
+                let y = 20;
 
-  const reader = new FileReader();
+                doc.setFontSize(16);
+                doc.text("Very Short Notes", 10, 10);
+                doc.setFontSize(11);
 
-  reader.onload = function(e) {
-    const fileData = e.target.result;
+                points.forEach(point => {
+                    const lines = doc.splitTextToSize(point, 180);
+                    doc.text(lines, 10, y);
+                    y += (lines.length * 7);
+                    if (y > 280) { doc.addPage(); y = 20; }
+                });
 
-    console.log("File loaded successfully");
+                doc.save(`${file.name.split('.')[0]}_Notes.pdf`);
+                alert("Processing Complete! Your PDF has been downloaded.");
+            } catch (err) {
+                console.error(err);
+                alert("Error processing file: " + err.message);
+            }
+        }
 
-  };
+        class DocumentExtractor {
+            constructor(model) {
+                this.model = model;
+                this.exampleTriggers = ["suppose", "imagine", "consider", "instance", "example", "say", "if"];
+                this.derivationTriggers = ["let", "hence", "therefore", "thus", "yields", "integrating", "deriving"];
+                this.unitsPattern = /\d+\s?(kg|m\/s|s|m|v|a|n|j|w|pa|hz|v|ω|Ω)/i;
+            }
 
-  reader.readAsDataURL(file);
-}
-</script>
+            async *extractPdfContent(file) {
+                const arrayBuffer = await file.arrayBuffer();
+                const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
 
+                for (let i = 1; i <= pdf.numPages; i++) {
+                    const page = await pdf.getPage(i);
+                    const textContent = await page.getTextContent();
+                    let text = textContent.items.map(s => s.str).join(" ").trim();
+
+                    yield { type: "pdf", page_number: i, text: text };
+                }
+            }
+
+            async *extractPptContent(file) {
+                const zip = await JSZip.loadAsync(file);
+                const slideFiles = Object.keys(zip.files)
+                    .filter(name => name.startsWith("ppt/slides/slide"))
+                    .sort((a, b) => a.localeCompare(b, undefined, {numeric: true}));
+                
+                for (let i = 0; i < slideFiles.length; i++) {
+                    const slideXml = await zip.file(slideFiles[i]).async("string");
+                    const parser = new DOMParser();
+                    const xmlDoc = parser.parseFromString(slideXml, "text/xml");
+                    const textNodes = xmlDoc.getElementsByTagName("a:t");
+                    let slideText = Array.from(textNodes).map(node => node.textContent).join(" ");
+
+                    yield { type: "ppt", slide_number: i + 1, text: slideText };
+                }
+            }
+
+            _analyzeIntent(text) {
+                const textLower = (text || "").toLowerCase();
+                let scoreExample = 0;
+                let scoreDerivation = 0;
+
+                const words = textLower.split(/\s+/).slice(0, 5).join(" ");
+                if (this.exampleTriggers.some(t => words.includes(t))) scoreExample += 4;
+                if (this.derivationTriggers.some(t => words.includes(t))) scoreDerivation += 4;
+
+                const mathSymbols = (text.match(/[=+\-*/^ΣΔθπ√∫≈≠≤≥]/g) || []).length;
+                if (mathSymbols > 3) scoreDerivation += 2;
+                if (this.unitsPattern.test(textLower)) scoreExample += 3;
+
+                if (scoreDerivation > scoreExample && scoreDerivation >= 4) return "derivation";
+                return scoreExample >= 3 ? "example" : "standard";
+            }
+
+            async generateNotes(file) {
+                const extension = file.name.split('.').pop().toLowerCase();
+                let stream;
+
+                if (extension === "pptx") stream = this.extractPptContent(file);
+                else if (extension === "pdf") stream = this.extractPdfContent(file);
+                else throw new Error("Unsupported file type.");
+
+                let consolidatedLines = [];
+
+                for await (const page of stream) {
+                    // Logic: Ignore empty or title-only pages
+                    if (!page.text || page.text.length < 10) continue;
+
+                    // Filter: Remove differentiation/tables based on pipe characters
+                    if (page.text.includes("|") && /\|.*\|/.test(page.text)) continue;
+
+                    const intent = this._analyzeIntent(page.text);
+                    let processedText = page.text;
+
+                    if (intent === "example") {
+                        processedText = await this.model.summarize(page.text, { 
+                            prompt: "Extract the core principle of this example in one sentence." 
+                        });
+                    } else if (intent === "derivation") {
+                        // Regex for math environments to find formulas
+                        const formulas = page.text.match(/\$.*?\$|\\\[.*?\\\]|[A-Z][a-z]?\s*=\s*[^.!?]+/g) || [];
+                        processedText = formulas.length > 0 ? `Key Formula: ${formulas[formulas.length - 1]}` : page.text;
+                    }
+
+                    if (processedText) {
+                        let clean = processedText.trim();
+                        if (!/[.!?]$/.test(clean)) clean += ".";
+                        consolidatedLines.push(clean);
+                    }
+                }
+
+                // Final consolidation pass
+                const finalSummary = await this.model.summarize(consolidatedLines.join(" "), {
+                    prompt: "Summarize this information into extremely concise bullet points."
+                });
+                
+                return finalSummary.split(/[.!?\n]/)
+                    .filter(pt => pt.trim().length > 5)
+                    .map((pt, i) => `Point ${i + 1}: ${pt.trim().charAt(0).toUpperCase() + pt.trim().slice(1)}`);
+            }
+        }
+    </script>
 </body>
 </html>
